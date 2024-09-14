@@ -6,12 +6,15 @@ DOCKER_EXECUTION=false
 DOCKER_IMAGE="ubuntu:latest"
 KUBERNETES_EXECUTION=false
 KUBERNETES_IMAGE="ubuntu:latest"
+APPLY_MANIFEST=false
+RUN_COMMAND=false
 
 # Function to display usage help
 usage() {
     echo "Usage: $0 [OPTIONS] COMMAND"
     echo ""
     echo "Options:"
+    echo "  --run                    Execute the command after safety checks."
     echo "  --force                  Force execution of unsafe commands and override root user check."
     echo "  --docker [IMAGE_NAME]    Run the command inside a Docker container."
     echo "                           If IMAGE_NAME is not specified, defaults to ubuntu:latest."
@@ -21,12 +24,12 @@ usage() {
     echo "  --help                   Display this help message."
     echo ""
     echo "Examples:"
-    echo "  $0 ls -la"
-    echo "  $0 --docker ubuntu:20.04 ls -la"
-    echo "  $0 --force rm -rf /important/data"
-    echo "  $0 --docker --force rm -rf /"
+    echo "  $0 --run ls -la"
+    echo "  $0 --docker ubuntu:20.04 --run ls -la"
+    echo "  $0 --force --run rm -rf /important/data"
+    echo "  $0 --docker --force --run rm -rf /"
     echo "  $0 --kubernetes alpine ls -la"
-    echo "  $0 --kubernetes ubuntu:20.04 --apply ls -la"
+    echo "  $0 --kubernetes ubuntu:20.04 --apply --run ls -la"
     exit 1
 }
 
@@ -71,9 +74,12 @@ if [ $# -eq 0 ] || [ "$1" == "--help" ]; then
 fi
 
 # Parse options
-APPLY_MANIFEST=false
 while [[ "$1" == --* ]]; do
     case "$1" in
+        --run)
+            RUN_COMMAND=true
+            shift
+            ;;
         --force)
             FORCE_EXECUTION=true
             shift
@@ -161,6 +167,39 @@ COMMAND_CATEGORIES=(
     ["Text Processing"]="cat|more|less|head|tail|grep|awk|sed|sort|uniq|wc|cut|paste"
 )
 
+
+# Function to generate Kubernetes manifest
+generate_kubernetes_manifest() {
+    MANIFEST_FILE=$(nktenp)
+    cat <<EOF > $MANIFEST_FILE
+apiVersion: v1
+kind: Pod
+metadata:
+  name: command-test
+spec:
+  restartPolicy: Never
+  containers:
+  - name: command-container
+    image: $KUBERNETES_IMAGE
+    command: [ "bash", "-c", "$COMMAND" ]
+EOF
+
+    echo "Generated Kubernetes manifest:"
+    cat $MANIFEST_FILE
+
+    if [ "$APPLY_MANIFEST" = true ]; then
+        check_kubectl
+        echo "Applying Kubernetes manifest"
+        kubectl apply -f $MANIFEST_FILE
+    else
+        echo "You can apply the manifest using:"
+        echo "kubectl apply -f $MANIFEST_FILE"
+    fi
+
+rm $MANIFEST_FILE
+}
+
+
 # Function to classify the command
 classify_command() {
     if [ "$KUBERNETES_EXECUTION" = true ]; then
@@ -208,21 +247,25 @@ fi
 # Check if the command is safe
 if is_safe; then
     echo "Command Type: $COMMAND_TYPE"
-    if [ "$DOCKER_EXECUTION" = true ]; then
-        echo "Running command inside Docker container: $DOCKER_IMAGE"
-        docker run --rm -it "$DOCKER_IMAGE" bash -c "$COMMAND"
-    elif [ "$KUBERNETES_EXECUTION" = true ]; then
-        echo "Generating Kubernetes manifest to run the command"
-        generate_kubernetes_manifest
+    echo "Evaluated Command: $COMMAND"
+    if [ "$RUN_COMMAND" = true ]; then
+        if [ "$DOCKER_EXECUTION" = true ]; then
+            echo "Running command inside Docker container: $DOCKER_IMAGE"
+            docker run --rm -it "$DOCKER_IMAGE" bash -c "$COMMAND"
+        elif [ "$KUBERNETES_EXECUTION" = true ]; then
+            echo "Generating Kubernetes manifest to run the command"
+            generate_kubernetes_manifest
+        else
+            echo "Running command: $COMMAND"
+            eval "$COMMAND"
+        fi
     else
-        echo "Running command: $COMMAND"
-        eval "$COMMAND"
+        echo "Command evaluation complete. Use --run to execute the command."
     fi
 else
     echo "Command Type: $COMMAND_TYPE"
-    echo "Command is not safe to run."
-    echo "Evaluated command: $COMMAND"
-    if [ "$FORCE_EXECUTION" = true ]; then
+    echo "Unsafe command detected. Evaluated Command: $COMMAND"
+    if [ "$FORCE_EXECUTION" = true ] && [ "$RUN_COMMAND" = true ]; then
         if [ "$DOCKER_EXECUTION" = true ]; then
             echo "Force execution enabled. Running command inside Docker container: $DOCKER_IMAGE"
             docker run --rm -it "$DOCKER_IMAGE" bash -c "$COMMAND"
@@ -234,36 +277,8 @@ else
             eval "$COMMAND"
         fi
     else
-        echo "Use --force to run the command anyway."
+        echo "Command is not safe to run."
+        echo "Use --force and --run to execute the command anyway."
         exit 1
     fi
 fi
-
-# Function to generate Kubernetes manifest
-generate_kubernetes_manifest() {
-    MANIFEST_FILE="command-pod.yaml"
-    cat <<EOF > $MANIFEST_FILE
-apiVersion: v1
-kind: Pod
-metadata:
-  name: command-test
-spec:
-  restartPolicy: Never
-  containers:
-  - name: command-container
-    image: $KUBERNETES_IMAGE
-    command: [ "bash", "-c", "$COMMAND" ]
-EOF
-
-    echo "Generated Kubernetes manifest:"
-    cat $MANIFEST_FILE
-
-    if [ "$APPLY_MANIFEST" = true ]; then
-        check_kubectl
-        echo "Applying Kubernetes manifest"
-        kubectl apply -f $MANIFEST_FILE
-    else
-        echo "You can apply the manifest using:"
-        echo "kubectl apply -f $MANIFEST_FILE"
-    fi
-}
