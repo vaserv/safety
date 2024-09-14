@@ -1,10 +1,6 @@
-Certainly! Here's the updated `README.md` reflecting the latest changes to the script:
-
----
-
 # Safe Command Executor
 
-A shell script that evaluates and safely executes commands, providing safety checks, command classification, and options to run commands inside a Docker container or Kubernetes environment.
+A shell script that evaluates commands for safety and classification, providing options to execute them if desired, and to run them inside Docker or Kubernetes environments.
 
 ## Table of Contents
 
@@ -18,13 +14,16 @@ A shell script that evaluates and safely executes commands, providing safety che
 - [Unsafe Patterns](#unsafe-patterns)
 - [Notes and Considerations](#notes-and-considerations)
 - [Customization](#customization)
+- [Testing the Script](#testing-the-script)
 - [License](#license)
 
 ## Features
 
-- **Safety Checks**: Prevents execution of potentially dangerous commands unless explicitly forced.
+- **Safety Checks**: Evaluates commands and prevents execution of potentially dangerous commands unless explicitly forced.
+- **Command Evaluation**: By default, the script evaluates and classifies commands without executing them.
+- **Execute Option**: Use `--run` to execute the command after evaluation.
 - **Root User Warning**: Warns and exits if the script is run as the root user unless `--force` is used.
-- **Command Classification**: Identifies and displays the type of command being executed.
+- **Command Classification**: Identifies and displays the type of command being evaluated.
 - **Docker Integration**: Option to run commands inside a Docker container for isolation.
 - **Kubernetes Integration**: Option to generate a Kubernetes manifest from the supplied command and optionally apply it.
 - **Help Prompt**: Provides usage instructions when no options are passed or when `--help` is used.
@@ -39,6 +38,7 @@ A shell script that evaluates and safely executes commands, providing safety che
 - **kubectl**: Required only if you plan to use the `--kubernetes` option with `--apply`.
   - `kubectl` must be installed and configured to connect to your Kubernetes cluster.
   - [Install kubectl](https://kubernetes.io/docs/tasks/tools/)
+- **Sudo Access**: Required for tests that simulate running the script as the root user.
 
 ## Installation
 
@@ -68,6 +68,9 @@ A shell script that evaluates and safely executes commands, providing safety che
 
 ### Options
 
+- `--run`  
+  Execute the command after safety checks.
+
 - `--force`  
   Force execution of unsafe commands and override root user check.
 
@@ -87,7 +90,7 @@ A shell script that evaluates and safely executes commands, providing safety che
 
 ### Examples
 
-#### Running a Safe Command
+#### Evaluating a Safe Command Without Execution
 
 ```bash
 ./safe_run.sh ls -la
@@ -97,110 +100,81 @@ A shell script that evaluates and safely executes commands, providing safety che
 
 ```
 Command Type: Filesystem Commands
-Running command: ls -la
-[Command output]
+Evaluated Command: ls -la
+Command evaluation complete. Use --run to execute the command.
 ```
 
-#### Attempting to Run an Unsafe Command Without `--force`
+#### Executing a Safe Command with `--run`
 
 ```bash
-./safe_run.sh rm -rf /important/data
+./safe_run.sh --run ls -la
 ```
 
 **Output:**
 
 ```
-Unsafe command detected: rm -rf
 Command Type: Filesystem Commands
+Evaluated Command: ls -la
+Running command: ls -la
+[Command output]
+```
+
+#### Evaluating an Unsafe Command Without Execution
+
+```bash
+./safe_run.sh rm -rf /
+```
+
+**Output:**
+
+```
+Command Type: Filesystem Commands
+Unsafe command detected. Evaluated Command: rm -rf /
 Command is not safe to run.
-Evaluated command: rm -rf /important/data
-Use --force to run the command anyway.
+Use --force and --run to execute the command anyway.
 ```
 
 #### Forcing Execution of an Unsafe Command
 
 ```bash
-./safe_run.sh --force rm -rf /important/data
+./safe_run.sh --force --run rm -rf /
 ```
 
 **Output:**
 
 ```
-Unsafe command detected: rm -rf
 Command Type: Filesystem Commands
-Command is not safe to run.
-Evaluated command: rm -rf /important/data
+Unsafe command detected. Evaluated Command: rm -rf /
 Force execution enabled. Running command.
 [Command executes]
 ```
 
-#### Running a Command Inside Docker
+#### Running a Command Inside Docker with `--run`
 
 ```bash
-./safe_run.sh --docker ubuntu:20.04 ls -la
+./safe_run.sh --docker ubuntu:20.04 --run ls -la
 ```
 
 **Output:**
 
 ```
 Command Type: Filesystem Commands
+Evaluated Command: ls -la
 Running command inside Docker container: ubuntu:20.04
 [Command output from inside Docker container]
 ```
 
-#### Forcing Execution of an Unsafe Command Inside Docker
+#### Generating and Applying a Kubernetes Manifest with `--run`
 
 ```bash
-./safe_run.sh --docker --force rm -rf /
-```
-
-**Output:**
-
-```
-Unsafe command detected: rm -rf
-Command Type: Filesystem Commands
-Command is not safe to run.
-Evaluated command: rm -rf /
-Force execution enabled. Running command inside Docker container: ubuntu:latest
-[Command executes inside Docker container]
-```
-
-#### Generating a Kubernetes Manifest
-
-```bash
-./safe_run.sh --kubernetes alpine ls -la
+./safe_run.sh --kubernetes ubuntu:20.04 --apply --run ls -la
 ```
 
 **Output:**
 
 ```
 Command Type: Kubernetes Command
-Generating Kubernetes manifest to run the command
-Generated Kubernetes manifest:
-apiVersion: v1
-kind: Pod
-metadata:
-  name: command-test
-spec:
-  restartPolicy: Never
-  containers:
-  - name: command-container
-    image: alpine
-    command: [ "bash", "-c", "ls -la" ]
-You can apply the manifest using:
-kubectl apply -f command-pod.yaml
-```
-
-#### Generating and Applying a Kubernetes Manifest
-
-```bash
-./safe_run.sh --kubernetes ubuntu:20.04 --apply ls -la
-```
-
-**Output:**
-
-```
-Command Type: Kubernetes Command
+Evaluated Command: ls -la
 Generating Kubernetes manifest to run the command
 Generated Kubernetes manifest:
 apiVersion: v1
@@ -217,33 +191,6 @@ Applying Kubernetes manifest
 [Output from kubectl apply]
 ```
 
-#### Forcing Execution of an Unsafe Command in Kubernetes
-
-```bash
-./safe_run.sh --force --kubernetes alpine rm -rf /
-```
-
-**Output:**
-
-```
-Unsafe command detected: rm -rf
-Command Type: Kubernetes Command
-Force execution enabled. Generating Kubernetes manifest to run the command
-Generated Kubernetes manifest:
-apiVersion: v1
-kind: Pod
-metadata:
-  name: command-test
-spec:
-  restartPolicy: Never
-  containers:
-  - name: command-container
-    image: alpine
-    command: [ "bash", "-c", "rm -rf /" ]
-You can apply the manifest using:
-kubectl apply -f command-pod.yaml
-```
-
 #### Displaying Help
 
 ```bash
@@ -256,6 +203,7 @@ kubectl apply -f command-pod.yaml
 Usage: ./safe_run.sh [OPTIONS] COMMAND
 
 Options:
+  --run                    Execute the command after safety checks.
   --force                  Force execution of unsafe commands and override root user check.
   --docker [IMAGE_NAME]    Run the command inside a Docker container.
                            If IMAGE_NAME is not specified, defaults to ubuntu:latest.
@@ -265,12 +213,12 @@ Options:
   --help                   Display this help message.
 
 Examples:
-  ./safe_run.sh ls -la
-  ./safe_run.sh --docker ubuntu:20.04 ls -la
-  ./safe_run.sh --force rm -rf /important/data
-  ./safe_run.sh --docker --force rm -rf /
+  ./safe_run.sh --run ls -la
+  ./safe_run.sh --docker ubuntu:20.04 --run ls -la
+  ./safe_run.sh --force --run rm -rf /important/data
+  ./safe_run.sh --docker --force --run rm -rf /
   ./safe_run.sh --kubernetes alpine ls -la
-  ./safe_run.sh --kubernetes ubuntu:20.04 --apply ls -la
+  ./safe_run.sh --kubernetes ubuntu:20.04 --apply --run ls -la
 ```
 
 ## Command Classification
@@ -311,8 +259,9 @@ The script checks for unsafe patterns to prevent accidental execution of dangero
 
 ### Safety Precautions
 
-- **Review Commands**: Always review the commands before execution, especially when using `--force`.
+- **Review Commands**: Always review the commands before execution, especially when using `--force` and `--run`.
 - **Force Option**: Use the `--force` option cautiously. It overrides safety checks and root user warnings, and can lead to unintended consequences.
+- **Execute Option**: By default, the script does not execute commands. Use `--run` to execute after evaluation.
 - **Root User Warning**: The script warns and exits if run as root unless `--force` is used.
 - **Docker and Kubernetes Execution**: Running commands inside Docker or Kubernetes can provide isolation, but be cautious when mounting volumes or interacting with the host system.
 
@@ -371,6 +320,47 @@ generate_kubernetes_manifest() {
 }
 ```
 
+## Testing the Script
+
+A test script `test_safe_run.sh` is provided to verify the functionality of `safe_run.sh`. The tests cover:
+
+- Safety checks for safe and unsafe commands
+- Command classification
+- Option parsing and handling
+- Execution in Docker and Kubernetes environments
+- Root user warning
+- Help message display
+
+### Running the Tests
+
+1. **Save the Test Script**
+
+   Save the test script to a file named `test_safe_run.sh`.
+
+2. **Make the Test Script Executable**
+
+   ```bash
+   chmod +x test_safe_run.sh
+   ```
+
+3. **Ensure Prerequisites Are Met**
+
+   - **Docker**: Install Docker and ensure the Docker daemon is running.
+   - **kubectl and Kubernetes Cluster**: Install `kubectl` and ensure you have access to a Kubernetes cluster.
+   - **Sudo Access**: Required for tests that simulate running the script as the root user.
+
+4. **Run the Tests**
+
+   ```bash
+   ./test_safe_run.sh
+   ```
+
+### Test Output
+
+The test script will output the result of each test, indicating whether it passed or failed. If a test fails, it will stop execution and display which test failed.
+
+**Note:** Be cautious when running tests that require elevated permissions. Review the test script to understand what actions it performs.
+
 ## License
 
 This script is released under the [MIT License](https://opensource.org/licenses/MIT). You are free to use, modify, and distribute it as per the license terms.
@@ -381,11 +371,4 @@ This script is released under the [MIT License](https://opensource.org/licenses/
 
 ---
 
-This updated `README.md` reflects the latest features of the script, including:
-
-- **Root User Warning**: The script warns if run as root and requires `--force` to proceed.
-- **Kubernetes Integration**: Added `--kubernetes` and `--apply` options to generate and optionally apply Kubernetes manifests.
-- **Updated Usage Examples**: Demonstrates how to use the new options.
-- **Additional Notes**: Includes considerations for using Kubernetes and the implications of running commands in different environments.
-
-Feel free to let me know if you need any more information or further adjustments!
+**Feel free to let me know if you need any more information or further adjustments!**

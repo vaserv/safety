@@ -1,13 +1,16 @@
 #!/bin/bash
 
+set -oeu pipefail
+# set -x 
 # Default behavior
-FORCE_EXECUTION=false
-DOCKER_EXECUTION=false
-DOCKER_IMAGE="ubuntu:latest"
-KUBERNETES_EXECUTION=false
-KUBERNETES_IMAGE="ubuntu:latest"
-APPLY_MANIFEST=false
-RUN_COMMAND=false
+export FORCE_EXECUTION=false
+export DOCKER_EXECUTION=false
+export DOCKER_IMAGE="ubuntu:latest"
+export KUBERNETES_EXECUTION=false
+export KUBERNETES_IMAGE="ubuntu:latest"
+export APPLY_MANIFEST=false
+export RUN_COMMAND=false
+export CHATGPT_EVALUATION=false
 
 # Function to display usage help
 usage() {
@@ -21,6 +24,7 @@ usage() {
     echo "  --kubernetes [IMAGE_NAME] Create and optionally apply a Kubernetes manifest to run the command."
     echo "                           If IMAGE_NAME is not specified, defaults to ubuntu:latest."
     echo "  --apply                  When used with --kubernetes, applies the manifest using kubectl."
+    echo "  --gpt                    Use ChatGPT to evaluate the command for safety."
     echo "  --help                   Display this help message."
     echo ""
     echo "Examples:"
@@ -30,6 +34,7 @@ usage() {
     echo "  $0 --docker --force --run rm -rf /"
     echo "  $0 --kubernetes alpine ls -la"
     echo "  $0 --kubernetes ubuntu:20.04 --apply --run ls -la"
+    echo "  $0 --gpt ls -la"
     exit 1
 }
 
@@ -59,6 +64,14 @@ check_kubectl() {
     fi
 }
 
+# Function to check if kubectl is installed and configured
+check_jq() {
+    if ! command -v jq &> /dev/null; then
+        echo "Error: jq is not installed or not found in PATH."
+        exit 1
+    fi
+}
+
 # Function to check if script is run as root
 check_root() {
     if [ "$EUID" -eq 0 ] && [ "$FORCE_EXECUTION" = false ]; then
@@ -66,6 +79,47 @@ check_root() {
         echo "Use --force to override this check and proceed as root."
         exit 1
     fi
+}
+
+# Function to evaluate the command using ChatGPT
+chatgpt_evaluate_command() {
+    local command="$1"
+
+    # Check if OPENAI_API_KEY is set
+    if [[ -z "$OPENAI_API_KEY" ]]; then
+        echo "Error: OPENAI_API_KEY is not set."
+        echo "Please export your OpenAI API key as an environment variable."
+        exit 1
+    fi
+
+    # Prepare the JSON payload
+    local payload=$(jq -n --arg cmd "$command" \
+        '{
+            "model": "gpt-3.5-turbo",
+            "messages": [
+                {"role": "system", "content": "You are an AI language assistant that helps to evaluate shell commands for safety and correctness."},
+                {"role": "user", "content": "Please evaluate the following shell command for safety and provide any potential risks:\n\n\"\($cmd)\""}
+            ]
+        }')
+
+    # Send the request to the OpenAI API
+    local response=$(curl -s -X POST https://api.openai.com/v1/chat/completions \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $OPENAI_API_KEY" \
+        -d "$payload")
+
+    # Check for errors in the response
+    if echo "$response" | grep -q '"error"'; then
+        local error_message=$(echo "$response" | jq -r '.error.message')
+        echo "Error from OpenAI API: $error_message"
+        exit 1
+    fi
+
+    # Extract the assistant's reply
+    local reply=$(echo "$response" | jq -r '.choices[0].message.content')
+
+    # Output the assistant's reply
+    echo -e "ChatGPT Evaluation:\n$reply"
 }
 
 # Check if no arguments are provided or if --help is used
@@ -102,6 +156,10 @@ while [[ "$1" == --* ]]; do
             ;;
         --apply)
             APPLY_MANIFEST=true
+            shift
+            ;;
+        --gpt)
+            CHATGPT_EVALUATION=true
             shift
             ;;
         --help)
@@ -167,10 +225,9 @@ COMMAND_CATEGORIES=(
     ["Text Processing"]="cat|more|less|head|tail|grep|awk|sed|sort|uniq|wc|cut|paste"
 )
 
-
 # Function to generate Kubernetes manifest
 generate_kubernetes_manifest() {
-    MANIFEST_FILE=$(nktenp)
+    MANIFEST_FILE="command-pod.yaml"
     cat <<EOF > $MANIFEST_FILE
 apiVersion: v1
 kind: Pod
@@ -195,8 +252,6 @@ EOF
         echo "You can apply the manifest using:"
         echo "kubectl apply -f $MANIFEST_FILE"
     fi
-
-rm $MANIFEST_FILE
 }
 
 
@@ -244,8 +299,33 @@ if [ "$KUBERNETES_EXECUTION" = true ] && [ "$APPLY_MANIFEST" = true ]; then
     check_kubectl
 fi
 
+# Check for jq
+if [ "$CHATGPT_EVALUATION" = true ]; then
+    check_jq
+fi
+
 # Check if the command is safe
+SAFE=1  # Assume unsafe
 if is_safe; then
+    SAFE=0
+fi
+
+# Evaluate with ChatGPT if requested
+if [ "$CHATGPT_EVALUATION" = true ]; then
+    chatgpt_evaluate_command "$COMMAND"
+    # Prompt user for decision
+    echo "Do you want to proceed with executing this command? (yes/no)"
+    read -r USER_DECISION
+    if [ "$USER_DECISION" != "yes" ]; then
+        echo "Command execution aborted by user."
+        exit 0
+    fi
+    # User wants to proceed, set SAFE=0
+    SAFE=0
+fi
+
+# Proceed based on safety and user options
+if [ $SAFE -eq 0 ]; then
     echo "Command Type: $COMMAND_TYPE"
     echo "Evaluated Command: $COMMAND"
     if [ "$RUN_COMMAND" = true ]; then
@@ -282,3 +362,4 @@ else
         exit 1
     fi
 fi
+

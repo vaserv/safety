@@ -20,6 +20,16 @@ run_as_root() {
     sudo bash -c "$1"
 }
 
+# Function to check if OPENAI_API_KEY is set
+check_openai_api_key() {
+    if [[ -z "$OPENAI_API_KEY" ]]; then
+        echo "[SKIP] $1: OPENAI_API_KEY is not set. Skipping test."
+        return 1
+    else
+        return 0
+    fi
+}
+
 # Test 1: Evaluate a safe command without execution
 test_safe_command_evaluation() {
     OUTPUT=$($SAFE_RUN_SCRIPT ls -la)
@@ -116,6 +126,71 @@ test_root_user_execution_with_force() {
     print_result $? "Test 12: Root user execution with --force"
 }
 
+# Test 13: Evaluate a safe command with --gpt without execution, user says no
+test_chatgpt_safe_command_evaluation_no() {
+    if ! check_openai_api_key "Test 13"; then
+        return
+    fi
+    OUTPUT=$(echo "no" | $SAFE_RUN_SCRIPT --gpt ls -la 2>&1)
+    echo "$OUTPUT" | grep -q "Command execution aborted by user."
+    print_result $? "Test 13: ChatGPT safe command evaluation, user aborts execution"
+}
+
+# Test 14: Evaluate a safe command with --gpt and execute it, user says yes
+test_chatgpt_safe_command_execution_yes() {
+    if ! check_openai_api_key "Test 14"; then
+        return
+    fi
+    OUTPUT=$(echo "yes" | $SAFE_RUN_SCRIPT --gpt --run echo "ChatGPT safe command execution" 2>&1)
+    echo "$OUTPUT" | grep -q "ChatGPT safe command execution"
+    print_result $? "Test 14: ChatGPT safe command execution with user confirmation"
+}
+
+# Test 15: Evaluate an unsafe command with --gpt without execution, user says no
+test_chatgpt_unsafe_command_evaluation_no() {
+    if ! check_openai_api_key "Test 15"; then
+        return
+    fi
+    OUTPUT=$(echo "no" | $SAFE_RUN_SCRIPT --gpt rm -rf / 2>&1)
+    echo "$OUTPUT" | grep -q "Command execution aborted by user."
+    print_result $? "Test 15: ChatGPT unsafe command evaluation, user aborts execution"
+}
+
+# Test 16: Evaluate an unsafe command with --gpt, user says yes, execution blocked unless --force
+test_chatgpt_unsafe_command_execution_yes_without_force() {
+    if ! check_openai_api_key "Test 16"; then
+        return
+    fi
+    OUTPUT=$(echo "yes" | $SAFE_RUN_SCRIPT --gpt --run rm -rf / 2>&1)
+    echo "$OUTPUT" | grep -q "Use --force and --run to execute the command anyway."
+    print_result $? "Test 16: ChatGPT unsafe command execution attempt without --force"
+}
+
+# Test 17: Evaluate an unsafe command with --gpt, user says yes, with --force and --run
+test_chatgpt_unsafe_command_execution_yes_with_force() {
+    if ! check_openai_api_key "Test 17"; then
+        return
+    fi
+    OUTPUT=$(echo "yes" | $SAFE_RUN_SCRIPT --gpt --force --run echo "ChatGPT unsafe command execution with force" 2>&1)
+    echo "$OUTPUT" | grep -q "ChatGPT unsafe command execution with force"
+    print_result $? "Test 17: ChatGPT unsafe command execution with user confirmation and --force"
+}
+
+# Test 18: Run script with --gpt when OPENAI_API_KEY is not set
+test_chatgpt_without_api_key() {
+    if [[ -n "$OPENAI_API_KEY" ]]; then
+        SAVED_API_KEY="$OPENAI_API_KEY"
+        unset OPENAI_API_KEY
+    fi
+    OUTPUT=$($SAFE_RUN_SCRIPT --gpt ls -la 2>&1)
+    echo "$OUTPUT" | grep -q "Error: OPENAI_API_KEY is not set."
+    RESULT=$?
+    if [[ -n "$SAVED_API_KEY" ]]; then
+        export OPENAI_API_KEY="$SAVED_API_KEY"
+    fi
+    print_result $RESULT "Test 18: ChatGPT evaluation without OPENAI_API_KEY"
+}
+
 # Run all tests
 test_safe_command_evaluation
 test_safe_command_execution
@@ -129,5 +204,11 @@ test_kubernetes_manifest_application
 test_help_option
 test_root_user_warning
 test_root_user_execution_with_force
+test_chatgpt_safe_command_evaluation_no
+test_chatgpt_safe_command_execution_yes
+test_chatgpt_unsafe_command_evaluation_no
+test_chatgpt_unsafe_command_execution_yes_without_force
+test_chatgpt_unsafe_command_execution_yes_with_force
+test_chatgpt_without_api_key
 
 echo "All tests passed successfully!"
